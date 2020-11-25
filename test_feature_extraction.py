@@ -1,27 +1,14 @@
+from modules.IterativeHistogram import IterativeHistogram
 from matplotlib.patches import ConnectionPatch
-from modules.BRIEF import extract_features
-from modules.BRIEF import generate_kernel
+from modules.align import BriefAligner
 from matplotlib import pyplot
 from random import randint
 from scipy import signal
 import os.path
 import numpy
+import math
 import sys
 import cv2
-
-
-# from:
-# https://scipy-lectures.org/intro/scipy/auto_examples/solutions/plot_image_blur.html
-def generate_gaussian_kernel(kernel_size):
-    # First a 1-D  Gaussian
-    t = numpy.linspace(-10, 10, kernel_size)
-    bump = numpy.exp(-0.1 * t ** 2)
-    bump /= numpy.trapz(bump)  # normalize the integral to 1
-
-    # make a 2-D kernel out of it
-    kernel = bump[:, numpy.newaxis] * bump[numpy.newaxis, :]
-
-    return kernel
 
 
 def main():
@@ -30,37 +17,20 @@ def main():
     test_data_paths = os.listdir(data_directory)
 
     feature_mask_path = os.path.join(project_directory, "feature_mask_90.npy")
-    feature_mask = numpy.load(feature_mask_path)
+    raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
 
-    radius = 90
-    kernel_size = radius*2 + 1
-    n_samples_per_kernel = 160
+    raw_feature_mask = numpy.load(raw_feature_mask_path)
+    raw_feature_mask_inverse = numpy.invert(raw_feature_mask)
 
-    kernel_a = generate_kernel(size=kernel_size, n_samples=n_samples_per_kernel)
-    kernel_b = generate_kernel(size=kernel_size, n_samples=n_samples_per_kernel)
-
-    # Make sure there's no leftover valid spots near the borders of the image
-    x_size = feature_mask.shape[0]
-    y_size = feature_mask.shape[1]
-    feature_mask[0:radius+1,:] = 1
-    feature_mask[x_size-radius-1:x_size:] = 1
-    feature_mask[:,0:radius+1] = 1
-    feature_mask[:,y_size-radius-1:y_size] = 1
-
-    # fig, axes = pyplot.subplots(ncols=1,nrows=2)
-    # axes[0].imshow(kernel_a)
-    # axes[1].imshow(kernel_b)
-    # pyplot.show()
-    # pyplot.close()
-
-    feature_mask_coordinates = numpy.nonzero(1 - feature_mask)
-
-    n_samples_per_image = 1200
-
-    smoothing_kernel = generate_gaussian_kernel(kernel_size=20)
+    aligner = BriefAligner(
+        feature_mask_path=feature_mask_path,
+        smoothing_radius=20,
+        kernel_radius=90,
+        n_samples_per_kernel=160,
+        n_samples_per_image=1000)
 
     for _ in range(100):
-        i = randint(0,len(test_data_paths))
+        i = randint(0,len(test_data_paths)-2)
 
         path_a = test_data_paths[i]
         path_b = test_data_paths[i + 1]
@@ -68,106 +38,78 @@ def main():
         absolute_path_a = os.path.join(data_directory, path_a)
         absolute_path_b = os.path.join(data_directory, path_b)
 
+        print(path_a, path_b)
+
         image_a = cv2.imread(absolute_path_a)
         image_b = cv2.imread(absolute_path_b)
 
-        grayscale_a = cv2.cvtColor(image_a, cv2.COLOR_BGR2GRAY)
-        grayscale_b = cv2.cvtColor(image_b, cv2.COLOR_BGR2GRAY)
+        # fig = pyplot.figure()
+        # gs = fig.add_gridspec(ncols=4, nrows=2)
+        # axes0 = fig.add_subplot(gs[0, 0])
+        # axes1 = fig.add_subplot(gs[1, 0])
+        # axes2 = fig.add_subplot(gs[0, 1])
+        # axes3 = fig.add_subplot(gs[1, 1])
+        # axes4 = fig.add_subplot(gs[:, 2:])
+        #
+        # axes2.set_title("x_shift histogram")
+        # axes3.set_title("y_shift histogram")
 
-        grayscale_a_smoothed = signal.oaconvolve(grayscale_a, smoothing_kernel, mode="same")
-        grayscale_b_smoothed = signal.oaconvolve(grayscale_b, smoothing_kernel, mode="same")
+        # axes0.imshow(image_a)
+        # axes1.imshow(image_b)
 
-        # fig, axes = pyplot.subplots(nrows=2, sharex=True, sharey=True)
-        # axes[0].imshow(grayscale_a)
-        # axes[1].imshow(grayscale_a_smoothed)
+        x_shift, y_shift = aligner.align(
+            image_a=image_a,
+            image_b=image_b)
+            # axes_a=axes0,
+            # axes_b=axes1,
+            # axes_x_shift=axes2,
+            # axes_y_shift=axes3)
+
+        print(x_shift)
+        print(y_shift)
+
+        x_size = image_a.shape[1]
+        y_size = image_a.shape[0]
+
+        x_a_start = max(0, x_shift)
+        y_a_start = max(0, y_shift)
+
+        x_b_start = max(0, -x_shift)
+        y_b_start = max(0, -y_shift)
+
+        x_a_stop = x_a_start + x_size
+        y_a_stop = y_a_start + y_size
+
+        x_b_stop = x_b_start + x_size
+        y_b_stop = y_b_start + y_size
+
+        # print(image_a.shape)
+        # print(x_a_start)
+        # print(y_a_start)
+        # print(x_b_start)
+        # print(y_b_start)
+        # print(x_a_stop)
+        # print(y_a_stop)
+        # print(x_b_stop)
+        # print(y_b_stop)
+
+        stitched_shape = list(image_a.shape)
+
+        stitched_shape[0] += abs(y_shift)
+        stitched_shape[1] += abs(x_shift)
+
+        stitched_image_a = numpy.zeros(stitched_shape, dtype=image_a.dtype)
+        stitched_image_b = numpy.zeros(stitched_shape, dtype=image_a.dtype)
+
+        stitched_image_a[y_a_start:y_a_stop, x_a_start:x_a_stop] = image_a
+        stitched_image_b[y_b_start:y_b_stop, x_b_start:x_b_stop] = image_b
+
+        stitched_image = cv2.addWeighted(stitched_image_a,0.5,stitched_image_b,0.5,0)
+
+        # axes4.imshow(stitched_image)
+        #
         # pyplot.show()
         # pyplot.close()
-
-        coord_indexes_a, features_a = extract_features(
-            grayscale_image=grayscale_a_smoothed,
-            feature_mask_coordinates=feature_mask_coordinates,
-            kernel_a=kernel_a,
-            kernel_b=kernel_b,
-            n_samples_per_image=n_samples_per_image)
-
-        coord_indexes_b, features_b = extract_features(
-            grayscale_image=grayscale_b_smoothed,
-            feature_mask_coordinates=feature_mask_coordinates,
-            kernel_a=kernel_a,
-            kernel_b=kernel_b,
-            n_samples_per_image=n_samples_per_image)
-
-        ambiguity = numpy.zeros(n_samples_per_image, dtype=numpy.int)
-        pairs = numpy.zeros(n_samples_per_image, dtype=numpy.int)
-
-        n_tests = 50
-
-        for i_a in range(n_tests):
-            min_a = sys.maxsize
-
-            n_nonzero = numpy.count_nonzero(features_a[i_a])
-            # print(n_nonzero)
-            # print(features_a[i_a].astype(numpy.int))
-
-            if (n_nonzero == 0):
-                pairs[i_a] = -1
-                continue
-
-            for i_b in range(len(features_b)):
-                hamming_distance = numpy.count_nonzero(features_a[i_a] != features_b[i_b])
-
-                if hamming_distance < min_a:
-                    pairs[i_a] = i_b
-                    min_a = hamming_distance
-
-                elif hamming_distance == min_a:
-                    ambiguity[i_a] += 1
-
-        fig, axes = pyplot.subplots(ncols=1, nrows=2)
-        # image_a[feature_mask] = 0
-        # image_b[feature_mask] = 0
-        axes[0].imshow(image_a)
-        axes[1].imshow(image_b)
-
-        x_shift = None
-        y_shift = None
-
-        for i_a in range(n_tests):
-            i_b = pairs[i_a]
-
-            if i_b < 0:
-                print("skipping")
-                continue
-
-            # print(features_a[i_a])
-            # print(features_b[i_b])
-
-            y_a = feature_mask_coordinates[0][coord_indexes_a[i_a]]
-            x_a = feature_mask_coordinates[1][coord_indexes_a[i_a]]
-
-            y_b = feature_mask_coordinates[0][coord_indexes_b[i_b]]
-            x_b = feature_mask_coordinates[1][coord_indexes_b[i_b]]
-
-            x_shift = x_b - x_a
-            y_shift = y_b - y_a
-
-            linestyle = "solid"
-
-            if ambiguity[i_a] > 1:
-                linestyle = (0, (1,10))
-
-            con = ConnectionPatch(xyA=(x_a, y_a), xyB=(x_b, y_b),
-                                  coordsA="data", coordsB="data",
-                                  axesA=axes[0], axesB=axes[1], color="red", linestyle=linestyle)
-
-            axes[1].text(x_b, y_b, str(ambiguity[i_a]), bbox=dict(facecolor='white', edgecolor='none', pad=0))
-            axes[1].add_artist(con)
-
-        x_shift /= n_tests
-        y_shift /= n_tests
-
-        pyplot.show()
-        pyplot.close()
 
 
 if __name__ == "__main__":

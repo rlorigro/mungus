@@ -23,12 +23,11 @@ def run_screencapture_loop():
     prev_image = None
     i=0
     while (True):
-        # Return PIL object
         if not game_window.isActive:
             game_window.activate()
             pyplot.pause(0.1)
 
-        window_region = (game_window.left, game_window.top, game_window.width, game_window.height)
+        window_region = (game_window.left + 10, game_window.top + 32, game_window.width - 20, game_window.height - 42)
         print(window_region)
 
         image = pyautogui.screenshot(region=window_region, imageFilename="screenshot_"+str(i)+".png")

@@ -91,6 +91,7 @@ def main():
     pyplot.close()
 
     numpy.save("feature_mask_" + str(radius) + ".npy", expanded_mask, allow_pickle=False)
+    numpy.save("feature_mask_raw.npy", mask, allow_pickle=False)
 
 
 
