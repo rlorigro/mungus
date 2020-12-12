@@ -91,7 +91,7 @@ class BriefAligner:
         y_radius = int((y_length - 1) / 2)
 
         coord_indexes = list()
-        features = list()
+        features = numpy.zeros([self.n_samples_per_image, self.n_samples_per_kernel])
 
         for n in range(self.n_samples_per_image):
             i = randint(0, len(self.feature_mask_coordinates[0]) - 1)
@@ -114,27 +114,15 @@ class BriefAligner:
             a = a[self.kernel_a]
             b = b[self.kernel_b]
 
-            feature = (a > b)
+            # print(a.shape)
+            # print(b.shape)
 
-            features.append(feature)
+            features[n] = (a > b)
 
         return coord_indexes, features
 
-    def align(self, image_a, image_b, axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
-        grayscale_a = cv2.cvtColor(image_a, cv2.COLOR_BGR2GRAY)
-        grayscale_b = cv2.cvtColor(image_b, cv2.COLOR_BGR2GRAY)
-
-        grayscale_a_smoothed = signal.oaconvolve(grayscale_a, self.smoothing_kernel, mode="same")
-        grayscale_b_smoothed = signal.oaconvolve(grayscale_b, self.smoothing_kernel, mode="same")
-
-        # fig, axes = pyplot.subplots(nrows=2, sharex=True, sharey=True)
-        # axes[0].imshow(grayscale_a)
-        # axes[1].imshow(grayscale_a_smoothed)
-        # pyplot.show()
-        # pyplot.close()
-
-        coord_indexes_a, features_a = self.extract_features(grayscale_image=grayscale_a_smoothed)
-        coord_indexes_b, features_b = self.extract_features(grayscale_image=grayscale_b_smoothed)
+    def compute_shift(self, image_shape, features_a, features_b, coord_indexes_a, coord_indexes_b,
+                      axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
 
         ambiguity = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
         pairs = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
@@ -142,10 +130,16 @@ class BriefAligner:
         n_tests = 400
 
         i_a = 0
+        n_attempted = 0
         while i_a < n_tests:
+
+            # There might not be enough good features to satisfy the desired number of tests per image
+            n_attempted += 1
+            if n_attempted == len(features_a):
+                break
+
             min_a = sys.maxsize
 
-            # TODO: FIX eternal while loop edge case
             # TODO: remove homogenous patches while building the patches... using the feature mask
             # Attempt to skip uniform patches
             n_nonzero = numpy.count_nonzero(features_a[i_a])
@@ -166,8 +160,8 @@ class BriefAligner:
 
             i_a += 1
 
-        x_size = image_a.shape[1]
-        y_size = image_a.shape[0]
+        x_size = image_shape[1]
+        y_size = image_shape[0]
 
         x_shifts = numpy.zeros(2*x_size + 1)
         y_shifts = numpy.zeros(2*y_size + 1)
@@ -229,25 +223,48 @@ class BriefAligner:
             axes_y_shift.plot(y_range, y_shifts)
             axes_y_shift.set_xlim([-y_size, y_size])
 
+        return x_shift, y_shift
+
+    def align(self, image_a, image_b, axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
+        grayscale_a = cv2.cvtColor(image_a, cv2.COLOR_BGR2GRAY)
+        grayscale_b = cv2.cvtColor(image_b, cv2.COLOR_BGR2GRAY)
+
+        grayscale_a_smoothed = signal.oaconvolve(grayscale_a, self.smoothing_kernel, mode="same")
+        grayscale_b_smoothed = signal.oaconvolve(grayscale_b, self.smoothing_kernel, mode="same")
+
+        # fig, axes = pyplot.subplots(nrows=2, sharex=True, sharey=True)
+        # axes[0].imshow(grayscale_a)
+        # axes[1].imshow(grayscale_a_smoothed)
+        # pyplot.show()
+        # pyplot.close()
+
+        coord_indexes_a, features_a = self.extract_features(grayscale_image=grayscale_a_smoothed)
+        coord_indexes_b, features_b = self.extract_features(grayscale_image=grayscale_b_smoothed)
+
+        x_shift, y_shift = self.compute_shift(
+            image_shape=image_a.shape,
+            features_a=features_a,
+            features_b=features_b,
+            coord_indexes_a=coord_indexes_a,
+            coord_indexes_b=coord_indexes_b,
+            axes_a=axes_a,
+            axes_b=axes_b,
+            axes_x_shift=axes_x_shift,
+            axes_y_shift=axes_y_shift)
 
         return x_shift, y_shift
 
 
 # NOT working for among us
-def align_cv2(image_a, image_b):
-    # cv_image_a = cv2.UMat(numpy.array(image_a))
-    # cv_image_b = cv2.UMat(numpy.array(image_b))
+def align_cv2(grayscale_a, grayscale_b, mask):
 
-    grayscale_a = cv2.cvtColor(image_a, cv2.COLOR_BGR2GRAY)
-    grayscale_b = cv2.cvtColor(image_b, cv2.COLOR_BGR2GRAY)
-
-    max_iterations = 5000
-    terminal_eps = 1e-2
+    max_iterations = 500
+    terminal_eps = 1e-4
 
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, max_iterations, terminal_eps)
 
     warp_matrix = numpy.eye(2, 3, dtype=numpy.float32)
-    (c, warp_matrix) = cv2.findTransformECC(grayscale_a, grayscale_b, warp_matrix, cv2.MOTION_TRANSLATION, criteria, None, 1)
+    (c, warp_matrix) = cv2.findTransformECC(grayscale_a, grayscale_b, warp_matrix, cv2.MOTION_TRANSLATION, criteria, mask, 1)
 
     # print(warp_matrix.get())
 

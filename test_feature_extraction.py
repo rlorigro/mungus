@@ -11,10 +11,17 @@ import sys
 import cv2
 
 
+def get_sortable_value_from_path(path):
+    value = int(path.split(".")[0].split("_")[-1])
+
+    print(path, value)
+    return value
+
+
 def main():
     project_directory = os.path.dirname(__file__)
     data_directory = os.path.join(project_directory, "data")
-    test_data_paths = os.listdir(data_directory)
+    test_data_paths = sorted(os.listdir(data_directory), key=lambda x: get_sortable_value_from_path(x))
 
     feature_mask_path = os.path.join(project_directory, "feature_mask_90.npy")
     raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
