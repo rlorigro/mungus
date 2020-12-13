@@ -3,6 +3,7 @@ from matplotlib.patches import ConnectionPatch
 from collections import defaultdict
 from matplotlib import pyplot
 from random import randint
+from random import shuffle
 from scipy import signal
 import os.path
 import numpy
@@ -22,7 +23,15 @@ class BriefAligner:
 
         self.smoothing_radius = smoothing_radius
         self.smoothing_kernel = None
-        self.generate_gaussian_kernel(kernel_size=20)
+
+        if smoothing_radius is not None:
+            self.generate_gaussian_kernel(kernel_size=20)
+
+        self.keypoint_detector = cv2.FastFeatureDetector_create()
+        print("threshold: ", self.keypoint_detector.getThreshold())
+        print("type: ", self.keypoint_detector.getType())
+        self.keypoint_detector.setType(1)
+        self.keypoint_detector.setThreshold(10)
 
         self.feature_mask = None
         self.load_feature_mask(path=feature_mask_path, radius=kernel_radius)
@@ -30,20 +39,31 @@ class BriefAligner:
         self.kernel_a = self.generate_boolean_kernel(kernel_size=self.kernel_size, n_samples=n_samples_per_kernel)
         self.kernel_b = self.generate_boolean_kernel(kernel_size=self.kernel_size, n_samples=n_samples_per_kernel)
 
-        self.feature_mask_coordinates = numpy.nonzero(1 - self.feature_mask)
-
     def load_feature_mask(self, path, radius):
-        self.feature_mask = numpy.load(path)
+        mask = numpy.invert(numpy.load(path)).astype(numpy.uint8)
 
-        # Make sure there's no leftover valid spots near the borders of the image
-        x_size = self.feature_mask.shape[0]
-        y_size = self.feature_mask.shape[1]
-        self.feature_mask[0:radius + 1, :] = 1
-        self.feature_mask[x_size - radius - 1:x_size:] = 1
-        self.feature_mask[:, 0:radius + 1] = 1
-        self.feature_mask[:, y_size - radius - 1:y_size] = 1
+        self.feature_mask = numpy.ones(mask.shape, dtype=mask.dtype)
 
-        return
+        x_size, y_size = mask.shape
+
+        mask[0:1, :] = 0
+        mask[(x_size - 1):x_size, :] = 0
+        mask[:, 0:1] = 0
+        mask[:, (y_size - 1):y_size] = 0
+
+        # Expand the mask by at least the radius of the feature so that no feature encounters an edge or empty value
+        for i in range(mask.shape[0]):
+            for j in range(mask.shape[1]):
+                if mask[i, j] == False:
+                    i_min = max(0, i - radius)
+                    i_max = min(mask.shape[0], i + radius)
+
+                    j_min = max(0, j - radius)
+                    j_max = min(mask.shape[1], j + radius)
+
+                    self.feature_mask[i_min:i_max, j_min:j_max] = False
+
+        return self.feature_mask
 
     # from:
     # https://scipy-lectures.org/intro/scipy/auto_examples/solutions/plot_image_blur.html
@@ -77,7 +97,21 @@ class BriefAligner:
 
         return mask
 
-    def extract_features(self, grayscale_image):
+    def extract_features(self, image):
+        grayscale_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        if self.smoothing_radius is not None:
+            grayscale_image = signal.oaconvolve(grayscale_image, self.smoothing_kernel, mode="same")
+
+        print(grayscale_image.shape, self.feature_mask.shape)
+        print(grayscale_image.dtype, self.feature_mask.dtype)
+
+        keypoints = self.keypoint_detector.detect(grayscale_image, self.feature_mask)
+
+        # Take a subset of the key points in random order
+        shuffle(keypoints)
+        keypoints = keypoints[0:min(len(keypoints), self.n_samples_per_image)]
+
         x_length = self.kernel_a.shape[0]
         y_length = self.kernel_a.shape[1]
 
@@ -90,15 +124,17 @@ class BriefAligner:
         x_radius = int((x_length - 1) / 2)
         y_radius = int((y_length - 1) / 2)
 
-        coord_indexes = list()
         features = numpy.zeros([self.n_samples_per_image, self.n_samples_per_kernel])
 
+        i = 0
         for n in range(self.n_samples_per_image):
-            i = randint(0, len(self.feature_mask_coordinates[0]) - 1)
-            coord_indexes.append(i)
+            x = int(keypoints[i].pt[0])
+            y = int(keypoints[i].pt[1])
 
-            x = self.feature_mask_coordinates[1][i]
-            y = self.feature_mask_coordinates[0][i]
+            i += 1
+
+            if i == len(keypoints):
+                break
 
             a = grayscale_image[y - y_radius:y + y_radius + 1, x - x_radius:x + x_radius + 1]
             b = grayscale_image[y - y_radius:y + y_radius + 1, x - x_radius:x + x_radius + 1]
@@ -111,23 +147,27 @@ class BriefAligner:
             # pyplot.show()
             # pyplot.close()
 
+            # print(a.shape)
+            # print(b.shape)
+            # print(self.kernel_a.shape)
+            # print(self.kernel_b.shape)
+
             a = a[self.kernel_a]
             b = b[self.kernel_b]
 
-            # print(a.shape)
-            # print(b.shape)
-
             features[n] = (a > b)
 
-        return coord_indexes, features
+        return keypoints, features
 
-    def compute_shift(self, image_shape, features_a, features_b, coord_indexes_a, coord_indexes_b,
+    def compute_shift(self, image_shape, features_a, features_b, keypoints_a, keypoints_b,
                       axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
 
         ambiguity = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
         pairs = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
 
-        n_tests = 400
+        n_tests = 200
+
+        print(len(keypoints_a), len(keypoints_b))
 
         i_a = 0
         n_attempted = 0
@@ -140,13 +180,12 @@ class BriefAligner:
 
             min_a = sys.maxsize
 
-            # TODO: remove homogenous patches while building the patches... using the feature mask
-            # Attempt to skip uniform patches
-            n_nonzero = numpy.count_nonzero(features_a[i_a])
-
-            if (n_nonzero == 0):
-                pairs[i_a] = -1
-                continue
+            # # Attempt to skip uniform patches
+            # n_nonzero = numpy.count_nonzero(features_a[i_a])
+            #
+            # if n_nonzero == 0:
+            #     pairs[i_a] = -1
+            #     continue
 
             for i_b in range(len(features_b)):
                 hamming_distance = numpy.count_nonzero(features_a[i_a] != features_b[i_b])
@@ -181,11 +220,13 @@ class BriefAligner:
             if ambiguity[i_a] > 1:
                 continue
 
-            y_a = self.feature_mask_coordinates[0][coord_indexes_a[i_a]]
-            x_a = self.feature_mask_coordinates[1][coord_indexes_a[i_a]]
+            y_a = int(keypoints_a[i_a].pt[1])
+            x_a = int(keypoints_a[i_a].pt[0])
 
-            y_b = self.feature_mask_coordinates[0][coord_indexes_b[i_b]]
-            x_b = self.feature_mask_coordinates[1][coord_indexes_b[i_b]]
+            y_b = int(keypoints_b[i_b].pt[1])
+            x_b = int(keypoints_b[i_b].pt[0])
+
+            # print(y_a, x_a, y_b, x_b)
 
             x_shift_i = x_b - x_a
             y_shift_i = y_b - y_a
@@ -226,11 +267,6 @@ class BriefAligner:
         return x_shift, y_shift
 
     def align(self, image_a, image_b, axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
-        grayscale_a = cv2.cvtColor(image_a, cv2.COLOR_BGR2GRAY)
-        grayscale_b = cv2.cvtColor(image_b, cv2.COLOR_BGR2GRAY)
-
-        grayscale_a_smoothed = signal.oaconvolve(grayscale_a, self.smoothing_kernel, mode="same")
-        grayscale_b_smoothed = signal.oaconvolve(grayscale_b, self.smoothing_kernel, mode="same")
 
         # fig, axes = pyplot.subplots(nrows=2, sharex=True, sharey=True)
         # axes[0].imshow(grayscale_a)
@@ -238,15 +274,15 @@ class BriefAligner:
         # pyplot.show()
         # pyplot.close()
 
-        coord_indexes_a, features_a = self.extract_features(grayscale_image=grayscale_a_smoothed)
-        coord_indexes_b, features_b = self.extract_features(grayscale_image=grayscale_b_smoothed)
+        keypoints_a, features_a = self.extract_features(image=image_a)
+        keypoints_b, features_b = self.extract_features(image=image_b)
 
         x_shift, y_shift = self.compute_shift(
             image_shape=image_a.shape,
             features_a=features_a,
             features_b=features_b,
-            coord_indexes_a=coord_indexes_a,
-            coord_indexes_b=coord_indexes_b,
+            keypoints_a=keypoints_a,
+            keypoints_b=keypoints_b,
             axes_a=axes_a,
             axes_b=axes_b,
             axes_x_shift=axes_x_shift,
@@ -255,7 +291,7 @@ class BriefAligner:
         return x_shift, y_shift
 
 
-# NOT working for among us
+# NOT working for Among us
 def align_cv2(grayscale_a, grayscale_b, mask):
 
     max_iterations = 500

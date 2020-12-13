@@ -23,17 +23,13 @@ def main():
     data_directory = os.path.join(project_directory, "data")
     test_data_paths = sorted(os.listdir(data_directory), key=lambda x: get_sortable_value_from_path(x))
 
-    feature_mask_path = os.path.join(project_directory, "feature_mask_90.npy")
     raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
 
-    raw_feature_mask = numpy.load(raw_feature_mask_path)
-    raw_feature_mask_inverse = numpy.invert(raw_feature_mask)
-
     aligner = BriefAligner(
-        feature_mask_path=feature_mask_path,
-        smoothing_radius=20,
-        kernel_radius=90,
-        n_samples_per_kernel=160,
+        feature_mask_path=raw_feature_mask_path,
+        smoothing_radius=None,
+        kernel_radius=30,
+        n_samples_per_kernel=80,
         n_samples_per_image=1000)
 
     for _ in range(100):
@@ -50,27 +46,30 @@ def main():
         image_a = cv2.imread(absolute_path_a)
         image_b = cv2.imread(absolute_path_b)
 
-        # fig = pyplot.figure()
-        # gs = fig.add_gridspec(ncols=4, nrows=2)
-        # axes0 = fig.add_subplot(gs[0, 0])
-        # axes1 = fig.add_subplot(gs[1, 0])
-        # axes2 = fig.add_subplot(gs[0, 1])
-        # axes3 = fig.add_subplot(gs[1, 1])
-        # axes4 = fig.add_subplot(gs[:, 2:])
-        #
-        # axes2.set_title("x_shift histogram")
-        # axes3.set_title("y_shift histogram")
+        print(image_a.dtype)
 
-        # axes0.imshow(image_a)
-        # axes1.imshow(image_b)
+        fig = pyplot.figure()
+        fig.set_size_inches(16,8)
+        gs = fig.add_gridspec(ncols=4, nrows=2)
+        axes0 = fig.add_subplot(gs[0, 0])
+        axes1 = fig.add_subplot(gs[1, 0])
+        axes2 = fig.add_subplot(gs[0, 1])
+        axes3 = fig.add_subplot(gs[1, 1])
+        axes4 = fig.add_subplot(gs[:, 2:])
+
+        axes2.set_title("x_shift histogram")
+        axes3.set_title("y_shift histogram")
+
+        axes0.imshow(image_a)
+        axes1.imshow(image_b)
 
         x_shift, y_shift = aligner.align(
             image_a=image_a,
-            image_b=image_b)
-            # axes_a=axes0,
-            # axes_b=axes1,
-            # axes_x_shift=axes2,
-            # axes_y_shift=axes3)
+            image_b=image_b,
+            axes_a=axes0,
+            axes_b=axes1,
+            axes_x_shift=axes2,
+            axes_y_shift=axes3)
 
         print(x_shift)
         print(y_shift)
@@ -113,10 +112,10 @@ def main():
 
         stitched_image = cv2.addWeighted(stitched_image_a,0.5,stitched_image_b,0.5,0)
 
-        # axes4.imshow(stitched_image)
-        #
-        # pyplot.show()
-        # pyplot.close()
+        axes4.imshow(numpy.flip(stitched_image,axis=2))
+
+        pyplot.show()
+        pyplot.close()
 
 
 if __name__ == "__main__":

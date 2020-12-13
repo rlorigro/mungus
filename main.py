@@ -54,28 +54,30 @@ def run_alignment_loop(window_name, aligner):
     game_window = candidate_windows[0]
 
     fig = pyplot.figure(figsize=[14,9])
-    gs = fig.add_gridspec(ncols=4, nrows=2)
-    axes_0 = fig.add_subplot(gs[0, 0])
-    axes_1 = fig.add_subplot(gs[1, 0])
-    axes_2 = fig.add_subplot(gs[0, 1])
-    axes_3 = fig.add_subplot(gs[1, 1])
-    axes_4 = fig.add_subplot(gs[:, 2:])
+    axes = pyplot.axes()
 
-    axes_2.set_title("x_shift histogram")
-    axes_3.set_title("y_shift histogram")
+    # gs = fig.add_gridspec(ncols=4, nrows=2)
+    # axes_0 = fig.add_subplot(gs[0, 0])
+    # axes_1 = fig.add_subplot(gs[1, 0])
+    # axes_2 = fig.add_subplot(gs[0, 1])
+    # axes_3 = fig.add_subplot(gs[1, 1])
+    # axes_4 = fig.add_subplot(gs[:, 2:])
+    # axes_2.set_title("x_shift histogram")
+    # axes_3.set_title("y_shift histogram")
 
     prev_image = None
     prev_features = None
-    prev_coord_indexes = None
+    prev_keypoints = None
     i=0
     while (True):
         start = datetime.now()
 
-        axes_0.clear()
-        axes_1.clear()
-        axes_2.clear()
-        axes_3.clear()
-        axes_4.clear()
+        axes.clear()
+        # axes_0.clear()
+        # axes_1.clear()
+        # axes_2.clear()
+        # axes_3.clear()
+        # axes_4.clear()
 
         if not game_window.isActive:
             game_window.activate()
@@ -83,28 +85,24 @@ def run_alignment_loop(window_name, aligner):
 
         window_region = (game_window.left + 10, game_window.top + 32, game_window.width - 20, game_window.height - 42)
 
-        image = numpy.float32(pyautogui.screenshot(region=window_region))
+        image = numpy.uint8(pyautogui.screenshot(region=window_region))
 
-        grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-        grayscale_smoothed = signal.oaconvolve(grayscale, aligner.smoothing_kernel, mode="same")
-
-        coord_indexes, features = aligner.extract_features(grayscale_image=grayscale_smoothed)
+        keypoints, features = aligner.extract_features(image=image)
 
         if prev_image is not None:
-            axes_0.imshow(prev_image/255)
-            axes_1.imshow(image/255)
+            # axes_0.imshow(prev_image/255)
+            # axes_1.imshow(image/255)
 
             x_shift, y_shift = aligner.compute_shift(
                 image_shape=image.shape,
                 features_a=prev_features,
                 features_b=features,
-                coord_indexes_a=prev_coord_indexes,
-                coord_indexes_b=coord_indexes,
-                axes_a=axes_0,
-                axes_b=axes_1,
-                axes_x_shift=axes_2,
-                axes_y_shift=axes_3)
+                keypoints_a=prev_keypoints,
+                keypoints_b=keypoints)
+                # axes_a=axes_0,
+                # axes_b=axes_1,
+                # axes_x_shift=axes_2,
+                # axes_y_shift=axes_3)
 
             x_size = image.shape[1]
             y_size = image.shape[0]
@@ -144,23 +142,21 @@ def run_alignment_loop(window_name, aligner):
 
             stitched_image = cv2.addWeighted(stitched_image_a,0.5,stitched_image_b,0.5,0)
 
-            axes_4.imshow(stitched_image/255)
+            # axes.imshow(numpy.flip(stitched_image, axis=2)/255)
+            # axes_4.imshow(stitched_image/255)
+            # pyplot.savefig("stitched_image_" + str(i) + ".png")
 
-            pyplot.savefig("stitched_image_" + str(i) + ".png")
+            cv2.imwrite("stitched_image_" + str(i) + ".png", numpy.flip(stitched_image, axis=2))
 
         prev_image = image
         prev_features = features
-        prev_coord_indexes = coord_indexes
+        prev_keypoints = keypoints
 
         stop = datetime.now()
 
         elapsed = stop - start
-        elapsed_seconds = elapsed.total_seconds()
 
         print(elapsed.total_seconds())
-
-        if elapsed_seconds < 1:
-            sleep(1-elapsed_seconds)
 
         i += 1
 
@@ -170,18 +166,14 @@ def main():
 
     project_directory = os.path.dirname(__file__)
 
-    feature_mask_path = os.path.join(project_directory, "feature_mask_90.npy")
     raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
 
-    raw_feature_mask = numpy.load(raw_feature_mask_path)
-    raw_feature_mask_inverse = numpy.invert(raw_feature_mask)
-
     aligner = BriefAligner(
-        feature_mask_path=feature_mask_path,
-        smoothing_radius=20,
-        kernel_radius=90,
-        n_samples_per_kernel=160,
-        n_samples_per_image=1000)
+        feature_mask_path=raw_feature_mask_path,
+        smoothing_radius=None,
+        kernel_radius=30,
+        n_samples_per_kernel=80,
+        n_samples_per_image=300)
 
     window_name = "Among Us"
 
