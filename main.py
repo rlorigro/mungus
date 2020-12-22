@@ -43,9 +43,12 @@ def run_screencapture_loop():
         pyplot.pause(0.05)
 
 
+def run_alignment_loop(window_name, aligner, stitch_mask_path=None):
+    stitch_mask = None
 
+    if stitch_mask_path is not None:
+        stitch_mask = numpy.invert(numpy.load(stitch_mask_path))
 
-def run_alignment_loop(window_name, aligner):
     candidate_windows = pyautogui.getWindowsWithTitle(window_name)
 
     if len(candidate_windows) == 0:
@@ -65,10 +68,17 @@ def run_alignment_loop(window_name, aligner):
     # axes_2.set_title("x_shift histogram")
     # axes_3.set_title("y_shift histogram")
 
+    # An empty array big enough to accommodate the entire map
+    collage = numpy.zeros([6_000,12_000,3],dtype=numpy.uint8)
+
+    # Pretend we are starting on the Skeld (top middle)
+    x_prev = 6000 + game_window.width
+    y_prev = 1000 + game_window.height
+
     prev_image = None
     prev_features = None
     prev_keypoints = None
-    i=0
+    i = 0
     while (True):
         start = datetime.now()
 
@@ -80,7 +90,13 @@ def run_alignment_loop(window_name, aligner):
         # axes_4.clear()
 
         if not game_window.isActive:
-            game_window.activate()
+            try:
+                game_window.activate()
+            except Exception as e:
+                print(e)
+                cv2.imwrite("test.png", numpy.flip(collage, axis=2))
+                exit()
+
             sleep(0.2)
 
         window_region = (game_window.left + 10, game_window.top + 32, game_window.width - 20, game_window.height - 42)
@@ -107,46 +123,55 @@ def run_alignment_loop(window_name, aligner):
             x_size = image.shape[1]
             y_size = image.shape[0]
 
-            x_a_start = max(0, x_shift)
-            y_a_start = max(0, y_shift)
+            x_start = x_prev - x_shift
+            y_start = y_prev - y_shift
 
-            x_b_start = max(0, -x_shift)
-            y_b_start = max(0, -y_shift)
+            print("shift: ", x_shift, y_shift)
+            print("size: ", x_size, y_size)
 
-            x_a_stop = x_a_start + x_size
-            y_a_stop = y_a_start + y_size
+            collage_subregion = collage[y_start:y_start+y_size, x_start:x_start+x_size, :]
 
-            x_b_stop = x_b_start + x_size
-            y_b_stop = y_b_start + y_size
+            print(collage_subregion.shape)
+            print(image.shape)
 
-            # print(image_a.shape)
-            # print(x_a_start)
-            # print(y_a_start)
-            # print(x_b_start)
-            # print(y_b_start)
-            # print(x_a_stop)
-            # print(y_a_stop)
-            # print(x_b_stop)
-            # print(y_b_stop)
+            stitched_image = cv2.addWeighted(collage_subregion, 0.5, image, 0.5, 0)
+            collage[y_start:y_start+y_size, x_start:x_start+x_size, :][stitch_mask] = stitched_image[stitch_mask]
 
-            stitched_shape = list(image.shape)
+            x_prev = x_start
+            y_prev = y_start
 
-            stitched_shape[0] += abs(y_shift)
-            stitched_shape[1] += abs(x_shift)
+            # cv2.imwrite("test.png", numpy.flip(collage,axis=2))
 
-            stitched_image_a = numpy.zeros(stitched_shape, dtype=image.dtype)
-            stitched_image_b = numpy.zeros(stitched_shape, dtype=image.dtype)
-
-            stitched_image_a[y_a_start:y_a_stop, x_a_start:x_a_stop] = prev_image
-            stitched_image_b[y_b_start:y_b_stop, x_b_start:x_b_stop] = image
-
-            stitched_image = cv2.addWeighted(stitched_image_a,0.5,stitched_image_b,0.5,0)
-
-            # axes.imshow(numpy.flip(stitched_image, axis=2)/255)
-            # axes_4.imshow(stitched_image/255)
-            # pyplot.savefig("stitched_image_" + str(i) + ".png")
-
-            cv2.imwrite("stitched_image_" + str(i) + ".png", numpy.flip(stitched_image, axis=2))
+            # x_size = image.shape[1]
+            # y_size = image.shape[0]
+            #
+            # x_a_start = max(0, x_shift)
+            # y_a_start = max(0, y_shift)
+            #
+            # x_b_start = max(0, -x_shift)
+            # y_b_start = max(0, -y_shift)
+            #
+            # x_a_stop = x_a_start + x_size
+            # y_a_stop = y_a_start + y_size
+            #
+            # x_b_stop = x_b_start + x_size
+            # y_b_stop = y_b_start + y_size
+            #
+            # stitched_shape = list(image.shape)
+            #
+            # stitched_shape[0] += abs(y_shift)
+            # stitched_shape[1] += abs(x_shift)
+            #
+            # stitched_image_a = numpy.zeros(stitched_shape, dtype=image.dtype)
+            # stitched_image_b = numpy.zeros(stitched_shape, dtype=image.dtype)
+            #
+            # stitched_image_a[y_a_start:y_a_stop, x_a_start:x_a_stop] = prev_image
+            # stitched_image_b[y_b_start:y_b_stop, x_b_start:x_b_stop] = image
+            #
+            # stitched_image = cv2.addWeighted(stitched_image_a, 0.5, stitched_image_b, 0.5, 0)
+            #
+            # cv2.imwrite("stitched_"+str(i)+".png", stitched_image)
+            # cv2.imwrite("image_"+str(i)+".png", image)
 
         prev_image = image
         prev_features = features
@@ -167,17 +192,18 @@ def main():
     project_directory = os.path.dirname(__file__)
 
     raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
+    stitch_mask_path = os.path.join(project_directory, "feature_mask_raw_border_only.npy")
 
     aligner = BriefAligner(
         feature_mask_path=raw_feature_mask_path,
         smoothing_radius=None,
-        kernel_radius=30,
-        n_samples_per_kernel=80,
-        n_samples_per_image=300)
+        kernel_radius=25,
+        n_samples_per_kernel=120,
+        n_samples_per_image=500)
 
     window_name = "Among Us"
 
-    run_alignment_loop(window_name, aligner)
+    run_alignment_loop(window_name, aligner, stitch_mask_path)
 
 
 if __name__ == "__main__":

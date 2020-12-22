@@ -55,11 +55,11 @@ class BriefAligner:
         for i in range(mask.shape[0]):
             for j in range(mask.shape[1]):
                 if mask[i, j] == False:
-                    i_min = max(0, i - radius)
-                    i_max = min(mask.shape[0], i + radius)
+                    i_min = max(0, i - (radius+5))
+                    i_max = min(mask.shape[0], i + (radius+5))
 
-                    j_min = max(0, j - radius)
-                    j_max = min(mask.shape[1], j + radius)
+                    j_min = max(0, j - (radius+5))
+                    j_max = min(mask.shape[1], j + (radius+5))
 
                     self.feature_mask[i_min:i_max, j_min:j_max] = False
 
@@ -166,8 +166,6 @@ class BriefAligner:
         pairs = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
 
         n_tests = 200
-
-        print(len(keypoints_a), len(keypoints_b))
 
         i_a = 0
         n_attempted = 0
