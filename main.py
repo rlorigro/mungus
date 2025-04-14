@@ -6,33 +6,41 @@ import matplotlib
 from datetime import datetime
 from scipy import signal
 from time import sleep
-import pyautogui
+import pywinctl as pwc
 import os.path
+from PIL.ImageGrab import grab
 import numpy
 import cv2
 
 
-def run_screencapture_loop():
-    candidate_windows = pyautogui.getWindowsWithTitle("Among Us")
+def run_screencapture_loop(window_name_query: str):
+    candidate_windows = pwc.getAllWindows()
+    target_window = None
 
-    if len(candidate_windows) == 0:
-        exit("ERROR: no window with 'Among Us' title found")
+    for window in candidate_windows:
+        if window_name_query in window.title:
+            target_window = window
 
-    game_window = candidate_windows[0]
+    if target_window is None:
+        exit("ERROR: no window with %s title found" % window_name_query)
+
     # axis = pyplot.axes()
     # pyplot.ion()
     # pyplot.show(block=False)
 
     i=0
     while (True):
-        if not game_window.isActive:
-            game_window.activate()
-            pyplot.pause(0.1)
+        if not target_window.isActive:
+            # target_window.activate()
+            print("Waiting for window to become active...")
+            sleep(1)
+            continue
 
-        window_region = (game_window.left + 10, game_window.top + 32, game_window.width - 20, game_window.height - 42)
+        window_region = (target_window.left + 10, target_window.top + 96, target_window.right - 20, target_window.bottom - 42)
         print(window_region)
 
-        image = pyautogui.screenshot(region=window_region, imageFilename="screenshot_"+str(i)+".png")
+        image = grab(window_region)
+        image.save("screenshot_" + str(i) + ".png")
 
         i = i + 1
 
@@ -40,40 +48,43 @@ def run_screencapture_loop():
 
         # axis.imshow(image)
         # pyplot.draw()
-        pyplot.pause(0.05)
+        sleep(0.05)
 
 
-def run_alignment_loop(window_name, aligner, stitch_mask_path=None):
+def run_alignment_loop(window_name_query, aligner, stitch_mask_path=None):
     stitch_mask = None
 
     if stitch_mask_path is not None:
         stitch_mask = numpy.invert(numpy.load(stitch_mask_path))
 
-    candidate_windows = pyautogui.getWindowsWithTitle(window_name)
+    candidate_windows = pwc.getAllWindows()
+    target_window = None
 
-    if len(candidate_windows) == 0:
-        exit("ERROR: no window with '" + window_name + "' title found")
+    for window in candidate_windows:
+        if window_name_query in window.title:
+            target_window = window
 
-    game_window = candidate_windows[0]
+    if target_window is None:
+        exit("ERROR: no window with %s title found" % window_name_query)
 
     fig = pyplot.figure(figsize=[14,9])
     axes = pyplot.axes()
 
-    # gs = fig.add_gridspec(ncols=4, nrows=2)
-    # axes_0 = fig.add_subplot(gs[0, 0])
-    # axes_1 = fig.add_subplot(gs[1, 0])
-    # axes_2 = fig.add_subplot(gs[0, 1])
-    # axes_3 = fig.add_subplot(gs[1, 1])
-    # axes_4 = fig.add_subplot(gs[:, 2:])
-    # axes_2.set_title("x_shift histogram")
-    # axes_3.set_title("y_shift histogram")
+    gs = fig.add_gridspec(ncols=4, nrows=2)
+    axes_0 = fig.add_subplot(gs[0, 0])
+    axes_1 = fig.add_subplot(gs[1, 0])
+    axes_2 = fig.add_subplot(gs[0, 1])
+    axes_3 = fig.add_subplot(gs[1, 1])
+    axes_4 = fig.add_subplot(gs[:, 2:])
+    axes_2.set_title("x_shift histogram")
+    axes_3.set_title("y_shift histogram")
 
     # An empty array big enough to accommodate the entire map
     collage = numpy.zeros([6_000,12_000,3],dtype=numpy.uint8)
 
     # Pretend we are starting on the Skeld (top middle)
-    x_prev = 6000 + game_window.width
-    y_prev = 1000 + game_window.height
+    x_prev = 6000 + target_window.width
+    y_prev = 1000 + target_window.height
 
     prev_image = None
     prev_features = None
@@ -82,32 +93,38 @@ def run_alignment_loop(window_name, aligner, stitch_mask_path=None):
     while (True):
         start = datetime.now()
 
-        axes.clear()
+        if not target_window.isActive:
+            print("Waiting for window to become active... use keyboard interrupt (CTRL-C) to save stitched image and exit")
+            prev_image = None
+
+            try:
+                sleep(1)
+            except KeyboardInterrupt:
+                cv2.imwrite("test.png", numpy.flip(collage, axis=2))
+                exit()
+
+            continue
+
+        # axes.clear()
         # axes_0.clear()
         # axes_1.clear()
         # axes_2.clear()
         # axes_3.clear()
         # axes_4.clear()
 
-        if not game_window.isActive:
-            try:
-                game_window.activate()
-            except Exception as e:
-                print(e)
-                cv2.imwrite("test.png", numpy.flip(collage, axis=2))
-                exit()
+        window_region = (target_window.left + 10, target_window.top + 96, target_window.right - 20, target_window.bottom - 42)
+        print(window_region)
 
-            sleep(0.2)
-
-        window_region = (game_window.left + 10, game_window.top + 32, game_window.width - 20, game_window.height - 42)
-
-        image = numpy.uint8(pyautogui.screenshot(region=window_region))
+        image = numpy.uint8(grab(window_region))
 
         keypoints, features = aligner.extract_features(image=image)
 
+        features = list(features)
+        keypoints = list(keypoints)
+
         if prev_image is not None:
-            # axes_0.imshow(prev_image/255)
-            # axes_1.imshow(image/255)
+            axes_0.imshow(prev_image/255)
+            axes_1.imshow(image/255)
 
             x_shift, y_shift = aligner.compute_shift(
                 image_shape=image.shape,
@@ -173,6 +190,9 @@ def run_alignment_loop(window_name, aligner, stitch_mask_path=None):
             # cv2.imwrite("stitched_"+str(i)+".png", stitched_image)
             # cv2.imwrite("image_"+str(i)+".png", image)
 
+            # pyplot.savefig("test_features_%d.png" % i)
+
+
         prev_image = image
         prev_features = features
         prev_keypoints = keypoints
@@ -187,23 +207,33 @@ def run_alignment_loop(window_name, aligner, stitch_mask_path=None):
 
 
 def main():
-    matplotlib.use('Agg')
 
     project_directory = os.path.dirname(__file__)
 
     raw_feature_mask_path = os.path.join(project_directory, "feature_mask_raw.npy")
-    stitch_mask_path = os.path.join(project_directory, "feature_mask_raw_border_only.npy")
+    stitch_mask_path = os.path.join(project_directory, "feature_mask_90.npy")
+
+    pyplot.imshow(numpy.load(raw_feature_mask_path))
+    pyplot.show()
+    pyplot.close()
+    # pyplot.imshow(numpy.load(stitch_mask_path))
+    # pyplot.show()
+    # pyplot.close()
+
+    matplotlib.use('Agg')
 
     aligner = BriefAligner(
         feature_mask_path=raw_feature_mask_path,
         smoothing_radius=None,
-        kernel_radius=25,
-        n_samples_per_kernel=120,
-        n_samples_per_image=500)
+        kernel_radius=100,
+        n_samples_per_kernel=300,
+        n_samples_per_image=800)
 
-    window_name = "Among Us"
+    # window_name = "Among Us"
+    window_name = "Google Maps"
 
     run_alignment_loop(window_name, aligner, stitch_mask_path)
+    # run_screencapture_loop(window_name)
 
 
 if __name__ == "__main__":

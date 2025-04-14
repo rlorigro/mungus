@@ -71,7 +71,7 @@ class BriefAligner:
         # First a 1-D  Gaussian
         t = numpy.linspace(-10, 10, kernel_size)
         bump = numpy.exp(-0.1 * t ** 2)
-        bump /= numpy.trapz(bump)  # normalize the integral to 1
+        bump /= numpy.trapezoid(bump)  # normalize the integral to 1
 
         # make a 2-D kernel out of it
         self.smoothing_kernel = bump[:, numpy.newaxis] * bump[numpy.newaxis, :]
@@ -107,6 +107,7 @@ class BriefAligner:
         print(grayscale_image.dtype, self.feature_mask.dtype)
 
         keypoints = self.keypoint_detector.detect(grayscale_image, self.feature_mask)
+        keypoints = list(keypoints)
 
         # Take a subset of the key points in random order
         shuffle(keypoints)
@@ -144,8 +145,9 @@ class BriefAligner:
             # r = pyplot.Rectangle(xy=(x-x_radius,y-y_radius), width=x_radius*2+1, height=y_radius*2+1, linewidth=1,edgecolor='r',facecolor='none')
             # axes[0].add_patch(r)
             # axes[1].imshow(a)
+            #
             # pyplot.show()
-            # pyplot.close()
+            # pyplot.close(fig)
 
             # print(a.shape)
             # print(b.shape)
@@ -162,8 +164,8 @@ class BriefAligner:
     def compute_shift(self, image_shape, features_a, features_b, keypoints_a, keypoints_b,
                       axes_a=None, axes_b=None, axes_x_shift=None, axes_y_shift=None):
 
-        ambiguity = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
-        pairs = numpy.zeros(self.n_samples_per_image, dtype=numpy.int)
+        ambiguity = numpy.zeros(self.n_samples_per_image, dtype=int)
+        pairs = numpy.zeros(self.n_samples_per_image, dtype=int)
 
         n_tests = 200
 

@@ -37,8 +37,8 @@ def main():
 
     variance = numpy.var(image_stack, axis=2)
 
-    min_mask = (variance < 450)
-    max_mask = (variance > 2500)
+    min_mask = (variance < 100)
+    max_mask = (variance > 4000)
 
     mask = numpy.logical_or(min_mask, max_mask)
 
